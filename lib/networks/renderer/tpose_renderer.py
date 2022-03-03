@@ -12,8 +12,16 @@ class Renderer:
 
     def get_wsampling_points(self, ray_o, ray_d, near, far):
         # calculate the steps for each ray
-        t_vals = torch.linspace(0., 1., steps=cfg.N_samples).to(near)
-        z_vals = near[..., None] * (1. - t_vals) + far[..., None] * t_vals
+        t_vals = torch.linspace(0., 1., steps=cfg.N_samples).to(near)#cfg.N_samples = 64,这个to(near)有什么用？=
+        '''
+        t_vals[64]
+        near:[1,1024]
+        near[...,None]:[1,1024,1]
+        near[...,None]*t_vals:[1,1024,64]
+        z_vals:[1,1024,64]
+        '''
+
+        z_vals = near[..., None] * (1. - t_vals) + far[..., None] * t_vals#把64个[0,1]的采样点映射到了[near,far]
 
         if cfg.perturb > 0. and self.net.training:
             # get intervals between samples
@@ -23,7 +31,11 @@ class Renderer:
             # stratified samples in those intervals
             t_rand = torch.rand(z_vals.shape).to(upper)
             z_vals = lower + (upper - lower) * t_rand
-
+        '''
+        ray_d[:, :, None]:[1,1024,1,3]
+        z_vals[..., None]:[1,1024,64,1]
+        pts:[1,1024,64,3]
+        '''
         pts = ray_o[:, :, None] + ray_d[:, :, None] * z_vals[..., None]
 
         return pts, z_vals
@@ -35,16 +47,16 @@ class Renderer:
         z_vals: n_batch, n_pixel, n_sample
         """
         n_batch, n_pixel, n_sample = wpts.shape[:3]
-        wpts = wpts.view(n_batch * n_pixel * n_sample, -1)
+        wpts = wpts.view(n_batch * n_pixel * n_sample, -1)#[65536,3]
         viewdir = viewdir[:, :, None].repeat(1, 1, n_sample, 1).contiguous()
-        viewdir = viewdir.view(n_batch * n_pixel * n_sample, -1)
+        viewdir = viewdir.view(n_batch * n_pixel * n_sample, -1)#[65536,3]
 
         # calculate dists for the opacity computation
-        dists = z_vals[..., 1:] - z_vals[..., :-1]
-        dists = torch.cat([dists, dists[..., -1:]], dim=2)
-        dists = dists.view(n_batch * n_pixel * n_sample)
+        dists = z_vals[..., 1:] - z_vals[..., :-1]#[1,1024,63]
+        dists = torch.cat([dists, dists[..., -1:]], dim=2)#[1,1024,64]
+        dists = dists.view(n_batch * n_pixel * n_sample)#[65536]
 
-        ret = raw_decoder(wpts, viewdir, dists)
+        ret = raw_decoder(wpts, viewdir, dists)#这就是tpose_nerf_network的前三个输入，最后一个输入是batch，dataloader直传的
 
         return ret
 
@@ -52,6 +64,10 @@ class Renderer:
         n_batch = ray_o.shape[0]
 
         # sampling points for nerf training
+        '''
+        [1,1024,64,1]
+        pts:[1,1024,64,3]
+        '''
         wpts, z_vals = self.get_wsampling_points(ray_o, ray_d, near, far)
         n_batch, n_pixel, n_sample = wpts.shape[:3]
 
@@ -63,10 +79,15 @@ class Renderer:
 
         # compute the color and density
         ret = self.get_density_color(wpts, viewdir, z_vals, raw_decoder)
-
+        '''
+        ret: ['pbw','tbw','raw']
+        'pbw':[1,1,24]?
+        'tbw':[1,11961,24]?
+        'raw':[1，65536,4]
+        '''
         # reshape to [num_rays, num_samples along ray, 4]
         n_batch, n_pixel, n_sample = z_vals.shape
-        raw = ret['raw'].reshape(-1, n_sample, 4)
+        raw = ret['raw'].reshape(-1, n_sample, 4)#[1024,64,4]
         z_vals = z_vals.view(-1, n_sample)
         ray_d = ray_d.view(-1, 3)
         rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(
@@ -117,6 +138,14 @@ class Renderer:
             pixel_value = self.get_pixel_value(ray_o_chunk, ray_d_chunk,
                                                near_chunk, far_chunk,
                                                occ_chunk, batch)
+            '''
+             dict_keys(['pbw', 'tbw', 'raw', 'rgb_map', 'acc_map', 'depth_map'])
+             rgb_map[1,1024,3]
+             acc_map[1,1024]
+             depth_map[1,1024]
+             pbw[1,24]
+             tbw[1,7831,24]
+             '''
             ret_list.append(pixel_value)
 
         keys = ret_list[0].keys()

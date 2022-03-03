@@ -19,6 +19,9 @@ class NetworkWrapper(nn.Module):
 
     def forward(self, batch):
         ret = self.renderer.render(batch)
+        '''
+        ret:dict_keys(['pbw', 'tbw', 'raw', 'rgb_map', 'acc_map', 'depth_map'])
+        '''
         scalar_stats = {}
         loss = 0
 

@@ -23,18 +23,29 @@ def get_rays_within_bounds_test(H, W, K, R, T, bounds):
 
 def get_rays(H, W, K, R, T):
     # calculate the camera origin
-    rays_o = -np.dot(R.T, T).ravel()
+    '''
+    K,R,T:相机的内外参数，这里R和T都是R_cw,T_cw。世界到相机的变换
+    因为view = 4；所以rays_o求得的是四个相机的光心在世界坐标系下的坐标
+    1.世界坐标到相机坐标的转换
+    P_c = R_cw*P_w + T_cw
+    P_w = R_cw.inverse()*(P_c-T_cw)
+    取P_c = 0
+    rays_o = -R_cw.inverse()*T_cw
+    '''
+    rays_o = -np.dot(R.T, T).ravel()#ravel():相当于flatten()的操作
     # calculate the world coodinates of pixels
+    #这几行代码值得学习，meshgrid，后面接1等操作，得到方向，broadcast_to等操作
+
     i, j = np.meshgrid(np.arange(W, dtype=np.float32),
                        np.arange(H, dtype=np.float32),
                        indexing='xy')
     xy1 = np.stack([i, j, np.ones_like(i)], axis=2)
     pixel_camera = np.dot(xy1, np.linalg.inv(K).T)
-    pixel_world = np.dot(pixel_camera - T.ravel(), R)
+    pixel_world = np.dot(pixel_camera - T.ravel(), R)#得到逐像素的世界坐标
     # calculate the ray direction
-    rays_d = pixel_world - rays_o[None, None]
-    rays_d = rays_d / np.linalg.norm(rays_d, axis=2, keepdims=True)
-    rays_o = np.broadcast_to(rays_o, rays_d.shape)
+    rays_d = pixel_world - rays_o[None, None]#得到方向向量
+    rays_d = rays_d / np.linalg.norm(rays_d, axis=2, keepdims=True)#得到单位方向向量
+    rays_o = np.broadcast_to(rays_o, rays_d.shape)#值得学习的操作。
     return rays_o, rays_d
 
 
@@ -87,11 +98,21 @@ def get_bound_2d_mask(bounds, K, pose, H, W):
 
 
 def get_near_far(bounds, ray_o, ray_d):
+    '''
+    注：补none的操作也是值得学习的，这是python原生的squeeze
+    np.array([-0.01, 0.01]):[2,]
+    np.array([-0.01, 0.01])[:,None]:[2,1]
+    bounds:[2,3]
+    bounds[None]:[1,2,3]
+    ray_o:[1024,3]
+    ray_o[:, None]:[1024,1,3]
+    '''
     """calculate intersections with 3d bounding box"""
-    bounds = bounds + np.array([-0.01, 0.01])[:, None]
-    nominator = bounds[None] - ray_o[:, None]
+    bounds = bounds + np.array([-0.01, 0.01])[:, None]#[2,3]+[2,1] = [2,3],[2,1]在最低维度上被复制为[2,3]并相加
+
+    nominator = bounds[None] - ray_o[:, None]#[1,2,3]+[1024,1,3] = [1024,2,3]
     # calculate the step of intersections at six planes of the 3d bounding box
-    d_intersect = (nominator / ray_d[:, None]).reshape(-1, 6)
+    d_intersect = (nominator / ray_d[:, None]).reshape(-1, 6)#[1024,2,3]/[1024,1,3] = [1024,2,3]
     # calculate the six interections
     p_intersect = d_intersect[..., None] * ray_d[:, None] + ray_o[:, None]
     # calculate the intersections located at the 3d bounding box
@@ -119,6 +140,17 @@ def get_near_far(bounds, ray_o, ray_d):
 
     return near, far, mask_at_box
 
+"""
+input:
+img：图像（RGB)
+msk：2值msk
+K：相机内参
+R，T：相机外参
+bounds：smpl人物模型的点云在世界坐标系下的包围盒
+nrays：发射光线的数量（？）
+split：train or test
+"""
+
 
 def sample_ray_h36m(img, msk, K, R, T, bounds, nrays, split):
     H, W = img.shape[:2]
@@ -132,9 +164,11 @@ def sample_ray_h36m(img, msk, K, R, T, bounds, nrays, split):
 
     msk = msk * bound_mask
     bound_mask[msk == 100] = 0
-
+    '''
+    如果是训练集，随机进行采样，如果是测试集，全部都要算rgb
+    '''
     if split == 'train':
-        nsampled_rays = 0
+        nsampled_rays = 0 #已采集的光线
         face_sample_ratio = cfg.face_sample_ratio
         body_sample_ratio = cfg.body_sample_ratio
         ray_o_list = []
@@ -146,9 +180,9 @@ def sample_ray_h36m(img, msk, K, R, T, bounds, nrays, split):
         mask_at_box_list = []
 
         while nsampled_rays < nrays:
-            n_body = int((nrays - nsampled_rays) * body_sample_ratio)
-            n_face = int((nrays - nsampled_rays) * face_sample_ratio)
-            n_rand = (nrays - nsampled_rays) - n_body - n_face
+            n_body = int((nrays - nsampled_rays) * body_sample_ratio)#身上采集的ray数量
+            n_face = int((nrays - nsampled_rays) * face_sample_ratio)#脸上采集的ray数量
+            n_rand = (nrays - nsampled_rays) - n_body - n_face#剩余的随机采集的ray数量
 
             # sample rays on body
             coord_body = np.argwhere(msk == 1)
@@ -167,11 +201,25 @@ def sample_ray_h36m(img, msk, K, R, T, bounds, nrays, split):
                 coord = np.concatenate([coord_body, coord_face, coord], axis=0)
             else:
                 coord = np.concatenate([coord_body, coord], axis=0)
+                '''
+                coord 得到所有要采集的坐标的像素值（u，v）坐标
+                coord[1024,2]
+                ray_o[512,512,3]
+                ray_o_[1024,3]
+
+                A = np.arange(16).reshape(4,4)
+                print(A)
+                msk1 = [0,1,2,3]
+                msk2 = [3,2,1,0]
+                A = A[msk1,msk2]
+                print(A)
+                这个代码值得学习，做一个挑选需要shoot ray的像素的操作
+                '''
 
             ray_o_ = ray_o[coord[:, 0], coord[:, 1]]
             ray_d_ = ray_d[coord[:, 0], coord[:, 1]]
             rgb_ = img[coord[:, 0], coord[:, 1]]
-
+            # get_near_far 这个没细看，返回的是3个[1024]数组，记录每个ray的far，near,mask_at_box返回bool
             near_, far_, mask_at_box = get_near_far(bounds, ray_o_, ray_d_)
 
             ray_o_list.append(ray_o_[mask_at_box])
@@ -194,6 +242,7 @@ def sample_ray_h36m(img, msk, K, R, T, bounds, nrays, split):
         rgb = img.reshape(-1, 3).astype(np.float32)
         ray_o = ray_o.reshape(-1, 3).astype(np.float32)
         ray_d = ray_d.reshape(-1, 3).astype(np.float32)
+        # get_near_far 这个没细看，返回的是3个[1024]数组，记录每个ray的far，near,mask_at_box返回bool
         near, far, mask_at_box = get_near_far(bounds, ray_o, ray_d)
         near = near.astype(np.float32)
         far = far.astype(np.float32)
@@ -201,7 +250,17 @@ def sample_ray_h36m(img, msk, K, R, T, bounds, nrays, split):
         ray_o = ray_o[mask_at_box]
         ray_d = ray_d[mask_at_box]
         coord = np.argwhere(mask_at_box.reshape(H, W) == 1)
-
+        '''
+        给定img，msk，相机参数，世界坐标下的bounds，给出nerf需要的参数
+        以nrays=1024为例
+        rgb = [1024,3]
+        ray_o = [1024,3]
+        ray_d = [1024,3]
+        near = [1024]
+        far = [1024]
+        coord = [1024,2] 像素坐标系的坐标
+        mask_at_box = [1024] bool 类型，是否在mask里
+        '''
     return rgb, ray_o, ray_d, near, far, coord, mask_at_box
 
 
@@ -295,10 +354,13 @@ def batch_rodrigues(poses):
 
 def get_rigid_transformation(poses, joints, parents):
     """
+    joints和parents是全局唯一的，poses是每张照片一个的
     poses: 24 x 3
     joints: 24 x 3
     parents: 24
+    返回24个变换矩阵
     """
+    # 将旋转向量全部转化为旋转矩阵
     rot_mats = batch_rodrigues(poses)
 
     # obtain the relative joints
@@ -434,6 +496,14 @@ def random_crop_image(img, msk, K, min_size=80, max_size=88):
 
 
 def get_bounds(xyz):
+    '''
+
+    Args:
+        xyz: [4890,3]人体点云数据
+    Returns:
+        [2,3],xyz上的bounds
+
+    '''
     min_xyz = np.min(xyz, axis=0)
     max_xyz = np.max(xyz, axis=0)
     min_xyz -= cfg.box_padding

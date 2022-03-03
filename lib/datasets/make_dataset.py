@@ -14,13 +14,21 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 def _dataset_factory(is_train):
     if is_train:
-        module = cfg.train_dataset_module
-        path = cfg.train_dataset_path
-        args = cfg.train_dataset
+        module = cfg.train_dataset_module#default:'lib.datasets.tpose_dataset'
+        path = cfg.train_dataset_path#default:'lib/datasets/tpose_dataset.py'
+        args = cfg.train_dataset#一个元组，如下：
+        '''
+        train_dataset:
+        data_root: 'data/zju_mocap/CoreView_313'
+        human: 'CoreView_313'
+        ann_file: 'data/zju_mocap/CoreView_313/annots.npy'
+        split: 'train'
+        '''
     else:
         module = cfg.test_dataset_module
         path = cfg.test_dataset_path
         args = cfg.test_dataset
+    #一个使用imp进行重载的例子
     dataset = imp.load_source(module, path).Dataset(**args)
     return dataset
 
