@@ -49,7 +49,7 @@ def pose_points_to_tpose_points(ppts, bw, A):
     return pts
 #重载，用于把神经bw改为神经deform的操作
 #自己加的！！
-def pose_points_to_tpose_points(ppts, bw,deform_derta, A):#deform_dert->3d
+def pose_points_to_tpose_points_d(ppts, bw, A,deform_derta):#deform_dert->3d
     #通过pbw，就可以给所有点转化到t坐标
     """transform points from the pose space to the T pose
     这是改过的函数，
