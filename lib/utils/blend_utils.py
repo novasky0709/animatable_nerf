@@ -49,7 +49,7 @@ def pose_points_to_tpose_points(ppts, bw, A):
     return pts
 #重载，用于把神经bw改为神经deform的操作
 #自己加的！！
-def pose_points_to_tpose_points_d(ppts, bw, A,deform_derta):#deform_dert->3d
+def pose_points_to_tpose_points_d(ppts, bw, A,derta_vec):#deform_dert->3d
     #通过pbw，就可以给所有点转化到t坐标
     """transform points from the pose space to the T pose
     这是改过的函数，
@@ -60,7 +60,7 @@ def pose_points_to_tpose_points_d(ppts, bw, A,deform_derta):#deform_dert->3d
 
     """
     sh = ppts.shape
-    deform_derta = deform_derta.permute(0,2,1)
+    derta_vec = derta_vec.permute(0,2,1)
     bw = bw.permute(0, 2, 1)
     # sh[0]:batchsize;从[1,24,4,4]->[1,24,16]
     #torch.bmm两个矩阵相乘。bw:[batch,24,npoint],A.v[batch,24,16]->[batch,npoint,16]
@@ -73,7 +73,7 @@ def pose_points_to_tpose_points_d(ppts, bw, A,deform_derta):#deform_dert->3d
     #已经实现了转换pts:[nbatch,nptr,3]
     pts = torch.sum(R_inv * pts[:, :, None], dim=3)
 
-    pts = pts + deform_derta
+    pts = pts + derta_vec
     return pts
 
 def pose_dirs_to_tpose_dirs(ddirs, bw, A):

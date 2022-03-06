@@ -25,10 +25,10 @@ class NetworkWrapper(nn.Module):
         scalar_stats = {}
         loss = 0
 
-        if 'pbw' in ret:
-            bw_loss = self.bw_crit(ret['pbw'], ret['tbw'])
-            scalar_stats.update({'bw_loss': bw_loss})
-            loss += bw_loss
+        # if 'pbw' in ret:
+        #     bw_loss = self.bw_crit(ret['pbw'], ret['tbw'])
+        #     scalar_stats.update({'bw_loss': bw_loss})
+        #     loss += bw_loss
 
         mask = batch['mask_at_box']
         img_loss = self.img2mse(ret['rgb_map'][mask], batch['rgb'][mask])

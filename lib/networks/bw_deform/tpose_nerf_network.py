@@ -18,14 +18,14 @@ class Network(nn.Module):
         self.actvn = nn.ReLU()
 
         input_ch = 191
-        D = 8
+        D = 4
         W = 256
         self.skips = [4]
         self.bw_linears = nn.ModuleList([nn.Conv1d(input_ch, W, 1)] + [
             nn.Conv1d(W, W, 1) if i not in
             self.skips else nn.Conv1d(W + input_ch, W, 1) for i in range(D - 1)
         ])
-        self.bw_fc = nn.Conv1d(W, 24, 1)#bw对于某一个点，就是24个标量
+        self.bw_fc = nn.Conv1d(W, 3, 1)#bw对于某一个点，就是24个标量
 
         if cfg.aninerf_animation:
             self.novel_pose_bw = BackwardBlendWeight()
@@ -58,13 +58,13 @@ class Network(nn.Module):
             net = self.actvn(self.bw_linears[i](net))
             if i in self.skips:
                 net = torch.cat((features, net), dim=1)
-        bw = self.bw_fc(net)#fc后是一个24D的向量(原文），现在改成了一个3D的偏移(e.x.[1,3,7457])
+        derta_vec = self.bw_fc(net)#fc后是一个24D的向量(原文），现在改成了一个3D的偏移(e.x.[1,3,7457])
         '''
         Equation(5),see paper
         '''
-        bw = torch.log(smpl_bw + 1e-9) + bw
-        bw = F.softmax(bw, dim=1)
-        return bw
+        # bw = torch.log(smpl_bw + 1e-9) + bw
+        # bw = F.softmax(bw, dim=1)
+        return derta_vec
 
     def pose_points_to_tpose_points(self, pose_pts, batch):
         """
@@ -75,20 +75,20 @@ class Network(nn.Module):
         init_pbw = pts_sample_blend_weights(pose_pts, batch['pbw'],
                                             batch['pbounds'])
         init_pbw = init_pbw[:, :24]
-
+        derta_vec = 0
         # neural blend weights of points at i
         if cfg.test_novel_pose:
             pbw = self.novel_pose_bw(pose_pts, init_pbw,
                                      batch['bw_latent_index'])
         else:
             # go this way at first stage(without animation)
-            pbw = self.calculate_neural_blend_weights(
+            derta_vec = self.calculate_neural_blend_weights(
                 pose_pts, init_pbw, batch['latent_index'] + 1)
         # 这里得到的pbw是derta pbw，3d向量(e.x.[1,3,7457])
         # transform points from i to i_0
-        tpose = pose_points_to_tpose_points(pose_pts, pbw, batch['A'])
+        tpose = pose_points_to_tpose_points_d(pose_pts, init_pbw, batch['A'],derta_vec)
         #t坐标下的所有采样点和他们对应的p坐标下的derta bw
-        return tpose, pbw
+        return tpose
 
     def calculate_alpha(self, wpts, batch):
         # transform points from the world space to the pose space
@@ -147,13 +147,13 @@ class Network(nn.Module):
         # transform points from the pose space to the tpose space
         # t坐标下的所有采样点和他们对应的p坐标下的bw，现在这个pbw没意义了
         # transform points from the pose space to the tpose space
-        tpose, pbw = self.pose_points_to_tpose_points(pose_pts, batch)
+        tpose = self.pose_points_to_tpose_points(pose_pts, batch)
         # calculate neural blend weights of points at the tpose space，在t坐标下，算一下他们的bw，由tbw采样得到的
-        init_tbw = pts_sample_blend_weights(tpose, batch['tbw'],
-                                            batch['tbounds'])
-        init_tbw = init_tbw[:, :24]
-        ind = torch.zeros_like(batch['latent_index'])
-        tbw = self.calculate_neural_blend_weights(tpose, init_tbw, ind)#这里index==0
+        # init_tbw = pts_sample_blend_weights(tpose, batch['tbw'],
+        #                                     batch['tbounds'])
+        # init_tbw = init_tbw[:, :24]
+        # ind = torch.zeros_like(batch['latent_index'])
+        # tbw = self.calculate_neural_blend_weights(tpose, init_tbw, ind)#这里index==0
 
         viewdir = viewdir[None]
         ind = batch['latent_index']
@@ -168,8 +168,8 @@ class Network(nn.Module):
         alpha_ind = alpha.detach() > cfg.train_th
         max_ind = torch.argmax(alpha, dim=1)
         alpha_ind[torch.arange(alpha.size(0)), max_ind] = True
-        pbw = pbw.transpose(1, 2)[alpha_ind][None]
-        tbw = tbw.transpose(1, 2)[alpha_ind][None]
+        # pbw = pbw.transpose(1, 2)[alpha_ind][None]
+        # tbw = tbw.transpose(1, 2)[alpha_ind][None]
 
         raw2alpha = lambda raw, dists, act_fn=F.relu: 1. - torch.exp(-act_fn(
             raw) * dists)
@@ -183,8 +183,8 @@ class Network(nn.Module):
         n_batch, n_point = wpts.shape[:2]
         raw_full = torch.zeros([n_batch, n_point, 4], dtype=wpts.dtype, device=wpts.device)
         raw_full[pind] = raw
-
-        ret = {'pbw': pbw, 'tbw': tbw, 'raw': raw_full}
+        ret = {'raw': raw_full}
+        #ret = {'pbw': pbw, 'tbw': tbw, 'raw': raw_full}
 
         return ret
 
